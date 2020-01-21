@@ -4,6 +4,7 @@ from spacy.util import compile_infix_regex, compile_prefix_regex, compile_suffix
 import spacy
 from spacy.attrs import LEMMA, LOWER, POS, TAG, ENT_TYPE, IS_ALPHA, DEP, HEAD, SPACY
 from random import shuffle
+from pre_processing_lib import get_sentences
 
 
 def clean_list_string(str_list: str):
@@ -24,7 +25,7 @@ class NERToken:
 
 
 class Sentence:
-    def __init__(self, id: int, token_with_labels: List[NERToken], token_with_predictions: List[NERToken] = None):
+    def __init__(self, id: str, token_with_labels: List[NERToken], token_with_predictions: List[NERToken] = None):
         self.id = id
         self.tokens = token_with_labels
         self.label_dict = Sentence.dict_building(token_with_labels)
@@ -38,6 +39,7 @@ class Sentence:
         drug_dict = dict()
         for index in range(len(drug_starts)):
             i = drug_starts[index]
+            id = labels[i].replace('B-', '')
             j = i+1
             while j < len(labels):
                 if labels[j] == 'O' or labels[j].startswith('B'):
@@ -45,12 +47,12 @@ class Sentence:
                 else:
                     j += 1
             drug_tokens = (i, j)
-            drug_dict.__setitem__(index, drug_tokens)
+            drug_dict.__setitem__(id, drug_tokens)
         return drug_dict
 
 
 class Pair:
-    def __init__(self, e1_id: int, e2_id: int, e1_index: int, e2_index: int, e1_text: str, e2_text: str):
+    def __init__(self, e1_id: str, e2_id: str, e1_index: int, e2_index: int, e1_text: str, e2_text: str):
         self.e1_id = e1_id
         self.e2_id = e2_id
         self.e1_index = e1_index
@@ -60,16 +62,20 @@ class Pair:
 
 
 class Instance():
-        def __init__(self, doc: Doc, original_doc: Doc, sentence_id: int, pair: Pair):
+        def __init__(self, doc: Doc, original_doc: Doc, pair: Pair):
             self.doc = doc
             self.original_doc = original_doc
-            self.sentence_id = sentence_id
             self.e1_id = pair.e1_id
             self.e2_id = pair.e2_id
-            self.pair_id = str(self.sentence_id) + '.' + str(self.e1_id)+'.'+str(self.e2_id)
+            self.pair = pair
+            self.class_value = ''
+            # self.pair_id = str(self.sentence_id) + '.' + str(self.e1_id)+'.'+str(self.e2_id)
 
         def __str__(self):
             return self.doc.text
+
+        def set_class(self, class_value: str):
+            self.class_value = class_value
 
 
 def get_tokenized_sentences(sentences_path, labels_path):
@@ -78,15 +84,19 @@ def get_tokenized_sentences(sentences_path, labels_path):
     assert len(sentence_file) == len(predictions)
     sentences = list()
     for i in range(len(sentence_file)):
-        sentence = sentence_file[i]
-        prediction = predictions[i]
+        id = sentence_file[i].split(': [')[0]
+        sentence = sentence_file[i].split(': [')[1]
         sentence = clean_list_string(sentence)
-        prediction = clean_list_string(prediction)
+        id_pred = predictions[i].split(': [')[0]
+        prediction = predictions[i].split(': [')[1]
         words = sentence.split(', ')
         labels = prediction.split(', ')
         assert len(words) == len(labels)
+        assert id == id_pred
         tokens = [NERToken(words[j], labels[j]) for j in range(len(words)) if words[j] != '']
-        ner_sentence = Sentence(i, tokens)
+        if not tokens:
+            print(sentence_file[i])
+        ner_sentence = Sentence(id, tokens)
         sentences.append(ner_sentence)
     return sentences
 
@@ -128,35 +138,13 @@ nlp = spacy.load('en')
 nlp.tokenizer = custom_tokenizer(nlp)
 
 
-def get_sentences_with_ids(sentences_path: str, predictions_path: str, labels_file: str):
-    sentence_file = open(sentences_path, 'r').readlines()
-    predictions = open(predictions_path, 'r').readlines()
-    labels = open(labels_file, 'r').readlines()
-    assert len(sentence_file) == len(predictions) == len(labels)
-    sentences = list()
-    for i in range(len(sentence_file)):
-        sentence = sentence_file[i]
-        prediction = predictions[i]
-        label = clean_list_string(labels[i])
-        sentence = clean_list_string(sentence)
-        prediction = clean_list_string(prediction)
-        words = sentence.split(', ')
-        prediction_list = prediction.split(', ')
-        label_list = label.split(', ')
-        assert len(prediction_list) == len(words) == len(label_list)
-        token_with_labels = [NERToken(words[j], label_list[j]) for j in range(len(words)) if words[j] != '']
-        token_with_predictions = [NERToken(words[j], prediction_list[j]) for j in range(len(words)) if words[j] != '']
-        ner_sentence = Sentence(i, token_with_labels, token_with_predictions)
-        sentences.append(ner_sentence)
-
-
 def generate_instances() -> List[Instance]:
     instances = list()
-    sentences = get_tokenized_sentences('DDI_NER_inputSent.txt', 'DDI_NER_predictLabels.txt')
+    sentences = get_tokenized_sentences('DDI_Test_Sent_Gold.txt', 'DDI_Test_IOB2_Gold.txt')
     shuffle(sentences)
     infixes = ['(', ')', '/', '-', ';', '*']
-    s_id = 0
     for s in sentences:
+        id = s.id
         tokens = s.tokens
         drug_keys = list(s.label_dict.keys())
         spaces = list()
@@ -170,9 +158,10 @@ def generate_instances() -> List[Instance]:
             spaces.append(space)
         spaces.append(False)
         words = [t.word for t in tokens]
-        assert len(spaces) == len(words)
-        doc = Doc(nlp.vocab, words, spaces)
-        merged = False
+        try:
+            doc = Doc(nlp.vocab, words, spaces)
+        except ValueError:
+            doc = Doc(nlp.vocab, words)
         for j in range(len(drug_keys)):
             start, end = s.label_dict.__getitem__(drug_keys[j])
             length = end - start
@@ -180,15 +169,22 @@ def generate_instances() -> List[Instance]:
                 # print(list(doc))
                 # span = doc[start:end]
                 with doc.retokenize() as retokenizer:
-                    retokenizer.merge(doc[start:end])
+                    try:
+                        retokenizer.merge(doc[start:end])
+                    except IndexError:
+                        print(words)
                 for k in range(j+1, len(drug_keys)):
+                    tokens = list(doc)
                     n_start, n_end = s.label_dict.__getitem__(drug_keys[k])
                     n_start -= length-1
                     n_end -= length-1
-                    s.label_dict.__setitem__(k, (n_start, n_end))
+                    s.label_dict.__setitem__(drug_keys[k], (n_start, n_end))
         pairs = list()
         drug_indexes = [s.label_dict.get(drug_keys[i]) for i in range(len(drug_keys))]
-        drugs = [(i, doc[i]) for (i, end) in drug_indexes]
+        try:
+            drugs = [(i, doc[i]) for (i, end) in drug_indexes]
+        except IndexError:
+            print(drug_indexes, words)
         if len(drugs) >= 2:
             for i in range(len(drug_keys)-1):
                 for j in range(i+1, len(drug_keys)):
@@ -200,13 +196,64 @@ def generate_instances() -> List[Instance]:
                     pairs.append(p)
         for p in pairs:
             new_doc = substitution(doc, p, drugs)
-            instance = Instance(new_doc, doc, s_id, p)
+            instance = Instance(new_doc, doc, p)
             instances.append(instance)
-        s_id += 1
+    xml_pairs = get_pairs_from_xml()
+    for i in range(len(instances)):
+        print(i)
+        p = instances[i].pair
+        e1_id = clean_list_string(p.e1_id)
+        e2_id = clean_list_string(p.e2_id)
+        found = False
+        for (e1, e2, class_value) in xml_pairs:
+            if e1 == e1_id and e2 == e2_id:
+                found = True
+                instances[i].set_class(class_value)
+                break
     return instances
 
 
-get_sentences_with_ids('DDI_NER_inputSent.txt', 'DDI_NER_predictLabels.txt', 'DDI_NER_correctLabels.txt')
+def get_pairs_from_xml():
+    xml_sentences = get_sentences('Dataset/Test/Overall')
+    pairs = list()
+    for i in range(0, len(xml_sentences)):
+        # s_id = xml_sentences[i].attributes['id'].value
+        s_pairs = xml_sentences[i].getElementsByTagName('pair')
+        for s_pair in s_pairs:
+            e1 = s_pair.attributes['e1'].value
+            e2 = s_pair.attributes['e2'].value
+            ddi = s_pair.attributes['ddi'].value
+            if ddi == 'false':
+                class_value = 'unrelated'
+            else:
+                class_value = s_pair.attributes['type'].value
+            pairs.append((e1, e2, class_value))
+    return pairs
+
+
+def check_ids():
+    sentences = get_tokenized_sentences('DDI_Test_Sent_Gold.txt', 'DDI_Test_IOB2_Gold.txt')
+    sentences = [s for s in sentences if s.tokens]
+    # sentences.sort(key=lambda x: x.id)
+    xml_sentences = get_sentences('Dataset/Test/Overall')
+    wrong = 0
+    wrong_list = []
+    for i in range(0, len(xml_sentences)):
+        entities = xml_sentences[i].getElementsByTagName('entity')
+        s_id = xml_sentences[i].attributes['id'].value
+        id = sentences[i].id
+        text = xml_sentences[i].attributes['text'].value
+        words = [token.word for token in sentences[i].tokens]
+        xml_entity_number = len(entities)
+        entity_number = len(sentences[i].label_dict.keys())
+        print(text, words)
+        if xml_entity_number != entity_number:
+            wrong += 1
+            wrong_list.append((s_id, xml_entity_number, entity_number))
+    print(wrong)
+    print(wrong_list)
+
+
 instances = generate_instances()
-for instance in instances:
-    print(instance.doc)
+print(len(instances))
+check_ids()
