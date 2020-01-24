@@ -31,9 +31,13 @@ class Sentence:
         self.predicted_tokens = token_with_predictions
         self.label_dict = Sentence.dict_building(token_with_labels, with_id=True)
         self.prediction_list = Sentence.dict_building(token_with_predictions, with_id=False)
-        self.correct_drugs = None
+        self.correct_drugs: dict = None
+        self.approximate_drugs: dict = None
         self.merged_drug_starts = None
+        self.wrong_drugs: dict = None
+        self.missing_drugs: dict = None
         self.doc = None
+        self.complete_list = None
 
     def __str__(self):
         if self.doc is None:
@@ -73,6 +77,10 @@ class Sentence:
 
     def check_correct(self):
         self.correct_drugs = dict()
+        self.approximate_drugs = dict()
+        self.wrong_drugs = dict()
+        self.missing_drugs = dict()
+        wrong_index = 0
         for k in self.label_dict.keys():
             correct_start, correct_end = self.label_dict.get(k)
             for start, end in self.prediction_list:
@@ -88,6 +96,23 @@ class Sentence:
                         if (start, end) not in self.correct_drugs.values():
                             self.correct_drugs.__setitem__(k, (start, end))
                             break
+                    elif predicted_string in original_string:
+                        if len(predicted_string) >= 0.5*len(original_string):
+                            self.approximate_drugs.__setitem__(k+'a', (start, end))
+        for (start, end) in self.prediction_list:
+            if (start, end) not in self.correct_drugs.values() and (start, end) not in self.approximate_drugs.values():
+                wrong_id = self.id + '.w' + str(wrong_index)
+                self.wrong_drugs.__setitem__(wrong_id, (start, end))
+                wrong_index += 1
+        for k in self.label_dict:
+            if k not in self.correct_drugs.keys() and k not in self.approximate_drugs.keys():
+                self.missing_drugs.__setitem__(k, self.label_dict.get(k))
+        complete_list = [(start, end, k, 'C') for start, end in self.correct_drugs.values() for k in self.correct_drugs.keys()]
+        complete_list += [(start, end, k, 'A') for start, end in self.approximate_drugs.values() for k in self.approximate_drugs.keys()]
+        complete_list += [(start, end, k, 'W') for start, end in self.wrong_drugs.values() for k in self.wrong_drugs.keys()]
+        complete_list = sorted(complete_list)
+        self.complete_list = complete_list
+
 
 class Pair:
     def __init__(self, e1_id: str, e2_id: str, e1_index: int, e2_index: int, e1_text: str, e2_text: str):
@@ -310,6 +335,8 @@ def sentences_from_prediction(sentences_path, labels_path):
         sentence = sentence_file[i].split(': [')[1]
         sentence = clean_list_string(sentence)
         id_pred = predictions[i].split(': [')[0].replace('; ', '')
+        if id_pred == 'DDI-DrugBank.d769.s3':
+            continue
         prediction = clean_list_string(predictions[i].split(': [')[1])
         words = sentence.split(', ')
         labels = prediction.split(', ')
@@ -322,49 +349,50 @@ def sentences_from_prediction(sentences_path, labels_path):
         tokens = [NERToken(words[j], labels[j]) for j in range(length) if words[j] != '']
         if not tokens:
             print(sentence_file[i])
-        ner_sentence = sentences_dict.get(id_pred)
+        ner_sentence: Sentence = sentences_dict.get(id_pred)
         ner_sentence.set_predictions(tokens)
+        print(ner_sentence.correct_drugs, ner_sentence.approximate_drugs, ner_sentence.wrong_drugs, ner_sentence.missing_drugs)
         sentences.append(ner_sentence)
-    infixes = ['(', ')', '/', '-', ';', '*']
-    for s in sentences:
-        id = s.id
-        tokens = s.tokens
-        drug_indexes = s.prediction_list
-        spaces = list()
-        for i in range(len(tokens) - 1):
-            actual = tokens[i]
-            next = tokens[i + 1]
-            if actual.word in infixes or next.word in infixes:
-                space = False
-            else:
-                space = True
-            spaces.append(space)
-        spaces.append(False)
-        words = [t.word for t in tokens]
-        try:
-            doc = Doc(nlp.vocab, words, spaces)
-        except ValueError:
-            doc = Doc(nlp.vocab, words)
-        for j in range(len(drug_indexes)):
-            start, end = drug_indexes[j]
-            length = end - start
-            if length > 1:
-                # print(list(doc))
-                # span = doc[start:end]
-                with doc.retokenize() as retokenizer:
-                    try:
-                        retokenizer.merge(doc[start:end])
-                    except IndexError:
-                        print(words)
-                for k in range(j + 1, len(drug_indexes)):
-                    tokens = list(doc)
-                    n_start, n_end = drug_indexes[k]
-                    n_start -= length - 1
-                    n_end -= length - 1
-                    s.prediction_list[k] = (n_start, n_end)
-        s.merged_drug_starts = [start for (start, end) in s.prediction_list]
-        s.doc = doc
     return sentences
 
 
 sentences = sentences_from_prediction('inputSent2.txt', 'predLabels2_modified.txt')
+infixes = ['(', ')', '/', '-', ';', '*']
+for s in sentences:
+    tokens = s.predicted_tokens
+    drug_indexes = s.complete_list
+    spaces = list()
+    for i in range(len(tokens) - 1):
+        actual = tokens[i]
+        next = tokens[i + 1]
+        if actual.word in infixes or next.word in infixes:
+            space = False
+        else:
+            space = True
+        spaces.append(space)
+    spaces.append(False)
+    words = [t.word for t in tokens]
+    try:
+        doc = Doc(nlp.vocab, words, spaces)
+    except ValueError:
+        doc = Doc(nlp.vocab, words)
+    for j in range(len(drug_indexes)):
+        start, end, drug_id, type = drug_indexes[j]
+        length = end - start
+        if length > 1:
+            # print(list(doc))
+            # span = doc[start:end]
+            with doc.retokenize() as retokenizer:
+                try:
+                    retokenizer.merge(doc[start:end])
+                except IndexError:
+                    print(words)
+            for k in range(j + 1, len(drug_indexes)):
+                tokens = list(doc)
+                n_start = drug_indexes[k][0]
+                n_end = drug_indexes[k][1]
+                n_start -= length - 1
+                n_end -= length - 1
+                s.complete_list[k] = (n_start, n_end, drug_id, type)
+    s.merged_drug_starts = [start for (start, end, id, type) in s.complete_list]
+    s.doc = doc
