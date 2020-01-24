@@ -290,6 +290,60 @@ def double_sequence(sentences):
     return sequence_pairs
 
 
-sentences = get_sentences('Dataset/Test/Overall')
-ner_instances = ner_format(sentences)
-write_ner_dataset(sentences, 'test')
+def iob2_format():
+    csv_file = open('MANUALLY_CHECKED_CSV_TEST.csv', 'r')
+    iob2_file = open('MANUALLY_CHECKED_TEST_SET_IOB2.txt', 'w')
+    lines = csv_file.readlines()
+    for i in range(1, len(lines)):
+        if lines[i].startswith('DDI-'):
+            iob2_file.write('\n')
+        else:
+            split = lines[i].split(';')
+            token = split[0]
+            label = split[1]
+            iob2_file.write(token + '\t' + label + '\n')
+    iob2_file.close()
+
+
+def linear_format():
+    csv_file = open('MANUALLY_CHECKED_CSV_TEST.csv', 'r')
+    lines = csv_file.readlines()
+    token_line = ''
+    id_line = ''
+    label_line = ''
+    token_file = open('MANUALLY_CHECKED_TOKEN.txt', 'w')
+    id_file = open('MANUALLY_CHECKED_ID.txt', 'w')
+    label_file = open('MANUALLY_CHECKED_LABEL.txt', 'w')
+    for i in range(0, len(lines)-1):
+        lines[i] = lines[i].replace('\n', '')
+        if lines[i].startswith('DDI-'):
+            if i != 0:
+                token_file.write(token_line+'\n')
+                label_file.write(label_line+'\n')
+                id_file.write(id_line+'\n')
+            token_line = lines[i].replace(';', '')
+            token_line += ': ['
+            id_line = token_line
+            label_line = token_line
+        else:
+            split = lines[i].split(';')
+            token = split[0]
+            label = split[1]
+            id = split[2]
+            if lines[i+1].startswith('DDI-'):
+                token_line += token + ']'
+                id_line += id + ']'
+                label_line += label + ']'
+            else:
+                token_line += token + ', '
+                id_line += id + ', '
+                label_line += label + ', '
+    token_file.close()
+    id_file.close()
+    label_file.close()
+
+
+# sentences = get_sentences('Dataset/Test/Overall')
+# ner_instances = ner_format(sentences)
+# write_ner_dataset(sentences, 'test')
+# linear_format()
