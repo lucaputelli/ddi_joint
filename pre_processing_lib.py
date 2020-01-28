@@ -183,7 +183,7 @@ def number_substitution(text: str) -> str:
 
 
 # Performs tokenization, detokenization and substitution
-def get_instances(sentences) -> Iterable[Instance]:
+def get_instances(sentences) -> List[Instance]:
     instances = list()
     for i in range(len(sentences)):
         braided = is_braided(sentences[i])
@@ -305,7 +305,7 @@ def graph_creation(doc: Doc) -> nx.Graph:
     return my_graph
 
 
-def path_calculation(instances: Iterable[Instance]):
+def path_calculation(instances: List[Instance]):
     no_pair = 0
     no_path = 0
     wrong_sentences = list()
@@ -407,12 +407,9 @@ def path_calculation(instances: Iterable[Instance]):
             path_with_labels.append((node_split[0], next_split[0], edge_label))
         #print(path_with_labels)
         instance.set_dependency_path(path_with_labels)
-    # print('No path: ', no_path)
-    # print('No pair: ', no_pair)
-    # print('Wrong sentences: ', len(wrong_sentences))
 
 
-def negative_filtering(instances: Iterable[Instance]) -> Iterable[Instance]:
+def negative_filtering(instances: List[Instance]) -> List[Instance]:
     path_calculation(instances)
     selected_instances = list()
     discarded = 0
@@ -443,7 +440,7 @@ def negative_filtering(instances: Iterable[Instance]) -> Iterable[Instance]:
     return selected_instances
 
 
-def blind_negative_filtering(instances: Iterable[Instance]):
+def blind_negative_filtering(instances: List[Instance]):
     path_calculation(instances)
     selected_instances = list()
     discarded_list = list()
@@ -478,7 +475,7 @@ def blind_negative_filtering(instances: Iterable[Instance]):
 # 2 MECHANISM
 # 3 ADVISE
 # 4 INT
-def get_labelled_instances(instances) -> (Iterable[Doc], Iterable[int]):
+def get_labelled_instances(instances) -> (List[Doc], List[int]):
     labels = []
     sents = []
     for instance in instances:
@@ -486,15 +483,15 @@ def get_labelled_instances(instances) -> (Iterable[Doc], Iterable[int]):
         sent = instance.get_doc()
         sents.append(sent)
         if class_val == 'false':
-            labels.append([1,0,0,0,0])
+            labels.append([1, 0, 0, 0, 0])
         if class_val == 'effect':
-            labels.append([0,1,0,0,0])
+            labels.append([0, 1, 0, 0, 0])
         if class_val == 'mechanism':
-            labels.append([0,0,1,0,0])
+            labels.append([0, 0, 1, 0, 0])
         if class_val == 'advise':
-            labels.append([0,0,0,1,0])
+            labels.append([0, 0, 0, 1, 0])
         if class_val == 'int':
-            labels.append([0,0,0,0,1])
+            labels.append([0, 0, 0, 0, 1])
     labels_array = np.asarray(labels, dtype='int32')
     return sents, labels_array
 

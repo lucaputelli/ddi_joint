@@ -3,8 +3,13 @@ from spacy.language import Doc, Language, Tokenizer
 from spacy.util import compile_infix_regex, compile_prefix_regex, compile_suffix_regex
 import spacy
 from spacy.attrs import LEMMA, LOWER, POS, TAG, ENT_TYPE, IS_ALPHA, DEP, HEAD, SPACY
-from random import shuffle
-from pre_processing_lib import get_sentences
+import networkx as nx
+from pre_processing_lib import get_sentences, graph_creation
+from networkx.exception import *
+from spacy import displacy
+from pathlib import Path
+import en_core_web_sm
+import numpy as np
 
 
 def clean_list_string(str_list: str):
@@ -136,7 +141,7 @@ class Pair:
         self.type = type
 
 
-class Instance():
+class JointInstance:
         def __init__(self, doc: Doc, original_doc: Doc, pair: Pair):
             self.doc = doc
             self.original_doc = original_doc
@@ -145,9 +150,16 @@ class Instance():
             self.pair = pair
             self.class_value = ''
             self.type = self.pair.type
+            self.dependency_path = None
 
         def __str__(self):
             return self.doc.text
+
+        def set_dependency_path(self, dependency_path):
+            self.dependency_path = dependency_path
+
+        def __len__(self):
+            return len(self.doc)
 
 
 def get_tokenized_sentences(sentences_path, labels_path):
@@ -209,7 +221,7 @@ nlp = spacy.load('en')
 nlp.tokenizer = custom_tokenizer(nlp)
 
 
-def generate_gold_standard(sentences: List[Sentence]) -> (List[Instance], List[Sentence]):
+def generate_gold_standard(sentences: List[Sentence]) -> (List[JointInstance], List[Sentence]):
     instances = list()
     infixes = ['(', ')', '/', '-', ';', '*']
     for s in sentences:
@@ -271,7 +283,7 @@ def generate_gold_standard(sentences: List[Sentence]) -> (List[Instance], List[S
                     pairs.append(p)
         for p in pairs:
             new_doc = substitution(doc, p, drugs)
-            instance = Instance(new_doc, doc, p)
+            instance = JointInstance(new_doc, doc, p)
             instances.append(instance)
     xml_pairs = get_pairs_from_xml()
     for i in range(len(instances)):
@@ -432,13 +444,123 @@ def instances_from_prediction():
         drugs = [(i, doc[i]) for i in s.merged_drug_starts]
         for p in pairs:
             new_doc = substitution(doc, p, drugs)
-            instance = Instance(new_doc, doc, p)
+            instance = JointInstance(new_doc, doc, p)
             instances.append(instance)
     xml_pairs = get_pairs_from_xml()
-    for i in instances:
-        for e1, e2, class_value in xml_pairs:
+    missing_pairs = list()
+    for e1, e2, class_value in xml_pairs:
+        found = False
+        for i in instances:
             id_1 = i.e1_id
             id_2 = i.e2_id
             if e1 == id_1 and e2 == id_2:
                 i.class_value = class_value
-    return instances
+                found = True
+        if not found:
+            missing_pairs.append((e1, e2, class_value))
+    wrong_instances = [i for i in instances if i.type == 'W']
+    right_instances = [i for i in instances if i.type == 'C' and i.class_value != '']
+    approximate_instances = [i for i in instances if i.type == 'A' and i.class_value != '']
+    return right_instances, approximate_instances, wrong_instances, missing_pairs
+
+
+def joint_path(instances: List[JointInstance]):
+    # Pipeline con tagger e parser da definire ed eseguire
+    nlp = en_core_web_sm.load()
+    no_pair = 0
+    no_path = 0
+    for instance in instances:
+        doc = instance.doc
+        for name, proc in nlp.pipeline:
+            doc = proc(doc)
+        html = displacy.render(doc, style='dep', page=True)
+        output_path = Path('sentence.html')
+        output_path.open('w', encoding='utf-8').write(html)
+        myGraph = graph_creation(doc)
+        string_drug1 = ''
+        string_drug2 = ''
+        for i in range(len(doc)):
+            token = doc[i]
+            text = token.text
+            if text == 'PairDrug1':
+                string_drug1 = text.lower() + '-' + str(i)
+            if text == 'PairDrug2':
+                string_drug2 = text.lower() + '-' + str(i)
+        try:
+            path = nx.shortest_path(myGraph, source=string_drug1, target=string_drug2)
+        except NodeNotFound:
+            instance.set_dependency_path(list())
+            no_pair += 1
+            continue
+        except NetworkXNoPath:
+            # Non trova il cammino dell'albero sintattico
+            no_path += 1
+            instance.set_dependency_path(list())
+            continue
+        path_with_labels = list()
+        for i in range(len(path)-1):
+            node = path[i]
+            node_split = node.rsplit('-')
+            next_node = path[i+1]
+            next_split = next_node.rsplit('-')
+            edges = myGraph[node]
+            for j in edges:
+                j_split = j.rsplit('-')
+                e = edges[j]
+                j_label = e['label']
+                if j_label == 'neg':
+                    path_with_labels.append((node_split[0], j_split[0], j_label))
+            edge = myGraph[node][next_node]
+            edge_label = edge['label']
+            path_with_labels.append((node_split[0], next_split[0], edge_label))
+        instance.set_dependency_path(path_with_labels)
+
+
+def joint_negative_filtering(instances: List[JointInstance]):
+    joint_path(instances)
+    selected_instances = list()
+    discarded_list = list()
+    positive_neg = 0
+    for instance in instances:
+        doc = instance.doc
+        text = doc.text
+        class_val = instance.class_value
+        nopair = text.count('NoPair')
+        if nopair == 2:
+            discarded_list.append(instance)
+        else:
+            dependency_path = instance.dependency_path
+            found = False
+            for (source, target, label) in dependency_path:
+                if source != 'pairdrug1' or source != 'pairdrug2' or source != 'and' or source != 'drug':
+                    found = True
+                if target != 'pairdrug1' or target != 'pairdrug2' or target != 'and' or target != 'drug':
+                    found = True
+            if not found:
+                discarded_list.append(instance)
+                if class_val != 'false':
+                    positive_neg += 1
+            else:
+                selected_instances.append(instance)
+    return selected_instances, discarded_list
+
+
+def joint_labelled_instances(instances: List[JointInstance]) -> (List[Doc], List[int]):
+    labels = []
+    sents = []
+    for instance in instances:
+        class_val = instance.class_value
+        sent = instance.doc
+        sents.append(sent)
+        if class_val == 'unrelated' or class_val == '':
+            labels.append([1, 0, 0, 0, 0])
+        if class_val == 'effect':
+            labels.append([0, 1, 0, 0, 0])
+        if class_val == 'mechanism':
+            labels.append([0, 0, 1, 0, 0])
+        if class_val == 'advise':
+            labels.append([0, 0, 0, 1, 0])
+        if class_val == 'int':
+            labels.append([0, 0, 0, 0, 1])
+    labels_array = np.asarray(labels, dtype='int32')
+    return sents, labels_array
