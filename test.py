@@ -33,42 +33,60 @@ def matrix_composition(doc_list):
     return word_matrix, pos_matrix, d1_matrix, d2_matrix
 
 
-def generate_negative_labels(negatives: List[JointInstance]):
-    length = len(negatives)
-    matrix = np.zeros((length, 5))
-    for i in range(length):
-        matrix[i] = np.array([1, 0, 0, 0, 0])
+def generate_negative_labels(instance_list):
+    length = len(instance_list)
+    matrix = np.zeros(length)
     return matrix
 
-def prediction(model, test_set: List[np.array], test_labels, test_negative):
+
+def generative_missing_labels(missing: List):
+    labels = list()
+    for id1, id2, class_val in missing:
+        if class_val == 'unrelated':
+            labels.append(0)
+        if class_val == 'effect':
+            labels.append(1)
+        if class_val == 'mechanism':
+            labels.append(2)
+        if class_val == 'advise':
+            labels.append(3)
+        if class_val == 'int':
+            labels.append(4)
+    labels_array = np.asarray(labels, dtype='int32')
+    return labels_array
+
+
+def generate_predictions(model, test_set: List[np.array], test_labels, test_negative):
     predictions = model.predict(test_set)
     numeric_predictions = np.argmax(predictions, axis=1)
     numeric_labels = np.argmax(test_labels, axis=1)
 
-    numeric_labels = np.concatenate((numeric_labels, np.argmax(test_negative, axis=1)))
+    numeric_labels = np.concatenate((numeric_labels, test_negative))
     numeric_predictions = np.concatenate((numeric_predictions, np.zeros(len(test_negative), dtype=np.int64)))
+    return numeric_labels, numeric_predictions
 
+
+def results(labels, predictions, test_name, folder):
     # Metrics
-    matrix, report, overall_precision, overall_recall, overall_f_score = metrics(numeric_labels,
-                                                                                 numeric_predictions)
-    f = open(combination_folder + '/metrics.txt', 'w')
+    matrix, report, overall_precision, overall_recall, overall_f_score = metrics(labels,
+                                                                                 predictions)
+    f = open(folder + '/metrics_'+test_name+'.txt', 'w')
     text = 'Classification Report\n\n{}\n\nConfusion Matrix\n\n{}\n\nOverall precision\n\n{}' \
            + '\n\nOverall recall\n\n{}\n\nOverall F-score\n\n{}\n'
     f.write(text.format(report, matrix, overall_precision, overall_recall, overall_f_score))
     f.close()
-
     # Model to JSON
     model_json = model.to_json()
-    with open(combination_folder + '/model.json', "w") as json_file:
+    with open(folder + '/model_'+test_name+'.json', "w") as json_file:
         json_file.write(model_json)
-
     # Model pickle
-    with open(combination_folder + '/metrics.pickle', 'wb') as pickle_file:
+    with open(folder + '/metrics_'+test_name+'.pickle', 'wb') as pickle_file:
         pickle.dump([matrix, report, overall_precision, overall_recall, overall_f_score], pickle_file)
+    return matrix
 
 
 # Pre-processing
-sents = get_sentences('Train/Sample')
+sents = get_sentences('Dataset/Train/Onlytrain')
 instances = get_instances(sents)
 instances = [x for x in instances if x is not None]
 instances = negative_filtering(instances)
@@ -85,6 +103,7 @@ sents, Y_train = get_labelled_instances(instances)
 right_sents, right_labels = joint_labelled_instances(right_selected)
 approximate_sents, approximate_labels = joint_labelled_instances(approximate_selected)
 wrong_sents, wrong_labels = joint_labelled_instances(wrong_selected)
+missing_labels = generative_missing_labels(t_missing)
 # sents, labels = get_labelled_instances(instances)
 word_model = Word2Vec.load('pub_med_retrained_ddi_word_embedding_200.model')
 tag_model = Word2Vec.load('ddi_pos_embedding.model')
@@ -96,15 +115,15 @@ R_word, R_pos, R_d1, R_d2 = matrix_composition(right_sents)
 A_word, A_pos, A_d1, A_d2 = matrix_composition(approximate_sents)
 W_word, W_pos, W_d1, W_d2 = matrix_composition(wrong_sents)
 
-folder = 'prova'
+folder = '2020_01_29_complete'
 if not exists(folder):
     mkdir(folder)
-for i in range(5):
+for i in range(10):
     lstm_units = np.random.randint(6, 13)*10
     dropout = np.random.rand() * 0.2 + 0.3
     r_dropout = np.random.rand() * 0.2 + 0.4
     batch_size = 128
-    epochs = 5
+    epochs = 65
     name = "LSTM_%d_DROP_%.2f_RDROP_%.2f" % (lstm_units, dropout, r_dropout)
     parameters_folder = folder+'/'+name
     if not exists(parameters_folder):
@@ -136,10 +155,19 @@ for i in range(5):
         model = neural_network(dim, lstm_units, dropout, r_dropout,
                                pos_tag, offset)
         history = model.fit(training_set, Y_train,
-                            validation_split=0.2,
+                            validation_split=0.15,
                             batch_size=batch_size,
                             epochs=epochs, verbose=2)
         plot(combination_folder, 'loss_accuracy_' + datetime.datetime.now().strftime("%Y%m%d-%H%M%S"), history)
-        prediction(model, right_set, right_labels, generate_negative_labels(right_negative))
-        prediction(model, approximate_set, approximate_labels, generate_negative_labels(approximate_negative))
-        prediction(model, wrong_set, wrong_labels, generate_negative_labels(wrong_negative))
+        total_right_labels, right_predictions = generate_predictions(model, right_set, right_labels,
+                                                               generate_negative_labels(right_negative))
+        total_approximate_labels, approximate_predictions = generate_predictions(model, approximate_set, approximate_labels,
+                                                                           generate_negative_labels(
+                                                                               approximate_negative))
+        total_wrong_labels, wrong_predictions = generate_predictions(model, wrong_set, wrong_labels,
+                                                               generate_negative_labels(wrong_negative))
+        missing_predictions = generate_negative_labels(t_missing)
+        complete_labels = np.concatenate([total_right_labels, total_approximate_labels, total_wrong_labels, missing_labels])
+        complete_predictions = np.concatenate(
+            [right_predictions, approximate_predictions, wrong_predictions, missing_predictions])
+        results(complete_labels, complete_predictions, 'complete', combination_folder)
