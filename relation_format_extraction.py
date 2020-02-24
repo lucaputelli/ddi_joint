@@ -29,6 +29,43 @@ class NERToken:
         return self.word + ' ' + self.label
 
 
+class CompleteNERToken:
+    def __init__(self, word: str, label: str, id: str):
+        self.word = word
+        self.label = label
+        self.id = id
+
+    def __str__(self):
+        return self.word + ' ' + self.label
+
+
+class SequencePair:
+
+    def __init__(self, first_sequence, second_sequence):
+        self.first_sequence = first_sequence
+        self.second_sequence = second_sequence
+
+
+class Interval:
+    def __init__(self, a: int, b: int):
+        self.low = a
+        self.high = b
+
+    def __str__(self):
+        return str(self.low) + '-' +str(self.high)
+
+
+class PairWithInterval:
+    def __init__(self, head_id: str, head_interval: Interval, tail_id: str, tail_interval: Interval):
+        self.head_id = head_id
+        self.head_interval = head_interval
+        self.tail_id = tail_id
+        self.tail_interval = tail_interval
+
+    def __str__(self):
+        return self.head_id + '('+str(self.head_interval)+'), ' + self.tail_id + '('+str(self.tail_interval)+')'
+
+
 class Sentence:
     def __init__(self, id: str, token_with_labels: List[NERToken] = None, token_with_predictions: List[NERToken] = None):
         self.id = id
@@ -43,6 +80,7 @@ class Sentence:
         self.missing_drugs: dict = None
         self.doc = None
         self.complete_list = None
+        self.count_approximate = True
 
     def __str__(self):
         if self.doc is None:
@@ -101,7 +139,7 @@ class Sentence:
                             self.correct_drugs.__setitem__(k, (start, end))
                             break
                     elif predicted_string in original_string:
-                        if len(predicted_string) >= 0.5*len(original_string):
+                        if len(predicted_string) >= 0.5*len(original_string) and self.count_approximate:
                             self.approximate_drugs.__setitem__(k, (start, end))
         for (start, end) in self.prediction_list:
             if (start, end) not in self.correct_drugs.values() and (start, end) not in self.approximate_drugs.values():
@@ -125,6 +163,20 @@ class Sentence:
         print(complete_list)
         self.complete_list = complete_list
 
+    def generate_pairs(self):
+        pairs = list()
+        for i in range(len(self.label_dict.keys())-1):
+            head_key = list(self.label_dict.keys())[i]
+            head_a, head_b = self.label_dict.get(head_key)
+            head_interval = Interval(head_a, head_b)
+            for j in range(i+1, len(self.label_dict.keys())):
+                tail_key = list(self.label_dict.keys())[j]
+                tail_a, tail_b = self.label_dict.get(tail_key)
+                tail_interval = Interval(tail_a, tail_b)
+                pair = PairWithInterval(head_key, head_interval, tail_key, tail_interval)
+                pairs.append(pair)
+        return pairs
+
 
 class Pair:
     def __init__(self, e1_id: str, e2_id: str, e1_index: int, e2_index: int, e1_text: str, e2_text: str, sentence: Sentence):
@@ -142,24 +194,24 @@ class Pair:
 
 
 class JointInstance:
-        def __init__(self, doc: Doc, original_doc: Doc, pair: Pair):
-            self.doc = doc
-            self.original_doc = original_doc
-            self.e1_id = pair.e1_id
-            self.e2_id = pair.e2_id
-            self.pair = pair
-            self.class_value = ''
-            self.type = self.pair.type
-            self.dependency_path = None
+    def __init__(self, doc: Doc, original_doc: Doc, pair: Pair):
+        self.doc = doc
+        self.original_doc = original_doc
+        self.e1_id = pair.e1_id
+        self.e2_id = pair.e2_id
+        self.pair = pair
+        self.class_value = ''
+        self.type = self.pair.type
+        self.dependency_path = None
 
-        def __str__(self):
-            return self.doc.text
+    def __str__(self):
+        return self.doc.text
 
-        def set_dependency_path(self, dependency_path):
-            self.dependency_path = dependency_path
+    def set_dependency_path(self, dependency_path):
+        self.dependency_path = dependency_path
 
-        def __len__(self):
-            return len(self.doc)
+    def __len__(self):
+        return len(self.doc)
 
 
 def get_tokenized_sentences(sentences_path, labels_path):
@@ -564,3 +616,110 @@ def joint_labelled_instances(instances: List[JointInstance]) -> (List[Doc], List
             labels.append([0, 0, 0, 0, 1])
     labels_array = np.asarray(labels, dtype='int32')
     return sents, labels_array
+
+
+def ner_labels_from_xml(path):
+    labels_dict = dict()
+    sentences = get_sentences(path)
+    for s in sentences:
+        entities = s.getElementsByTagName('entity')
+        for e in entities:
+            id = e.attributes['id'].value
+            type = e.attributes['type'].value
+            labels_dict.__setitem__(id, type)
+    return labels_dict
+
+
+def double_format():
+    id_sentences_gold = get_tokenized_sentences('MANUALLY_CHECKED_TOKEN.txt', 'MANUALLY_CHECKED_ID.txt')
+    xml_pairs = get_pairs_from_xml()
+    all_pairs = list()
+    labels_dict = ner_labels_from_xml('Dataset/Test/Overall')
+    complete_pairs = list()
+    for i in range(len(id_sentences_gold)):
+        s = id_sentences_gold[i]
+        pairs = s.generate_pairs()
+        heads = list(set([(p.head_id, p.head_interval) for p in pairs]))
+        heads.sort()
+        original_tokens = s.original_tokens
+        head_sequences = list()
+        tail_sequences = list()
+        first_ids = list()
+        second_ids = list()
+        for head_id, interval in heads:
+            first_ids.append(head_id)
+            first_sequence = list()
+            label = labels_dict.get(head_id)
+            for j in range(len(original_tokens)):
+                word = original_tokens[j].word
+                if interval.low <= j < interval.high and original_tokens[j].label != 'O':
+                    if original_tokens[j].label.startswith('B'):
+                        ner_label = 'B-'+label
+                        ner_id = 'B-'+head_id
+                    else:
+                        ner_label = 'I-'+label
+                        ner_id = 'I-'+head_id
+                else:
+                    ner_label = 'O'
+                    ner_id = 'O'
+                new_token = CompleteNERToken(word, ner_label, ner_id)
+                first_sequence.append(new_token)
+            tails = list(set([(p.tail_id, p.tail_interval) for p in pairs if p.head_id == head_id]))
+            tails.sort()
+            second_sequence = list()
+            for k in range(len(original_tokens)):
+                word = original_tokens[k].word
+                if interval.low <= k < interval.high:
+                    r_label = 'N'
+                    r_id = 'O'
+                else:
+                    found = False
+                    class_value = ''
+                    second_id = -1
+                    for tail_id, tail_interval in tails:
+                        if tail_interval.low <= k <= tail_interval.high:
+                            found = True
+                            second_id = tail_id
+                            if tail_id not in second_ids:
+                                second_ids.append(tail_id)
+                    if found:
+                        for id1, id2, r_label in xml_pairs:
+                            if id1 == head_id and id2 == second_id:
+                                class_value = r_label
+                        if original_tokens[k].label.startswith('B'):
+                            r_label = 'B-' + class_value
+                            r_id = 'B-'+second_id
+                        else:
+                            r_label = 'I-' + class_value
+                            r_id = 'I-'+second_id
+                    else:
+                        r_label = 'N'
+                        r_id = 'O'
+                second_sequence.append(CompleteNERToken(word, r_label, r_id))
+            head_sequences.append(first_sequence)
+            tail_sequences.append(second_sequence)
+            # print([i.word + ' ' + i.label for i in first_sequence])
+            # print([i.word + ' ' + i.label for i in second_sequence])
+        merged_first_sequence = list()
+        for n in range(len(original_tokens)):
+            final_label = 'O'
+            final_id = 'O'
+            for sequence in head_sequences:
+                label = sequence[n].label
+                if final_label == 'O' and label != 'O':
+                    final_label = label
+                id = sequence[n].id
+                if final_id == 'O' and id !='O':
+                    final_id = sequence[n].id
+            merged_token = CompleteNERToken(original_tokens[n].word, final_label, final_id)
+            merged_first_sequence.append(merged_token)
+        # print([i.word + ' ' + i.label for i in merged_first_sequence])
+        all_pairs += pairs
+        for seq in tail_sequences:
+            complete_pair = SequencePair(merged_first_sequence, seq)
+            complete_pairs.append(complete_pair)
+    return complete_pairs
+
+
+pairs = double_format()
+print(len(pairs))

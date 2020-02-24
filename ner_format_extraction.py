@@ -1,12 +1,12 @@
-from pre_processing_lib import get_sentences
+from pre_processing_lib import get_sentences, number_substitution
 import spacy
 from spacy.language import Language, Tokenizer
 from typing import Dict
 
 
-prefix_re = spacy.util.compile_prefix_regex(Language.Defaults.prefixes + (';', '\*'))
-suffix_re = spacy.util.compile_suffix_regex(Language.Defaults.suffixes + (';' , '\*'))
-infix_re = spacy.util.compile_infix_regex(Language.Defaults.infixes + ("/", "-", ";", "\*"))
+prefix_re = spacy.util.compile_prefix_regex(Language.Defaults.prefixes + (';', '\*', '\(', '\)'))
+suffix_re = spacy.util.compile_suffix_regex(Language.Defaults.suffixes + (';' , '\*', '\(', '\)'))
+infix_re = spacy.util.compile_infix_regex(Language.Defaults.infixes + ("/", "-", ";", "\*", '\(', '\)'))
 nlp = spacy.load('en')
 nlp.tokenizer.suffix_search = suffix_re.search
 nlp.tokenizer.prefix_search = prefix_re.search
@@ -27,13 +27,16 @@ def only_spaces(token: str) -> bool:
     return True
 
 
-def ner_format(sentences) -> Dict:
+def ner_format(sentences, no_number = False, clean_separators = False) -> Dict:
     ner_instances = dict()
     for i in range(len(sentences)):
         s_id = sentences[i].attributes['id'].value
         entities = sentences[i].getElementsByTagName('entity')
         entity_tuples = list()
         text = str(sentences[i].attributes['text'].value)
+        # NUMBER SUBSTITUTION
+        if no_number:
+            text = number_substitution(text)
         nlp_doc = nlp(text)
         tokens = list(nlp_doc)
         cleaned_tokens = [t for t in tokens if '\n' not in t.text or '\r' not in t.text]
@@ -107,16 +110,27 @@ def ner_format(sentences) -> Dict:
                 if i not in ner_index.keys():
                     ner_index.__setitem__(i, ('O', 'O'))
         ner_format = [(tokens[i], ner_index.get(i)) for i in ner_index.keys() if not only_spaces(tokens[i].text)]
-        ner_instances.__setitem__(s_id, ner_format)
+        # RIMUOVO SEPARATORI DAI NOMI
+        if clean_separators:
+            separators = ['(', ')', '-']
+            cleaner_format = []
+            for token, label_tuple in ner_format:
+                if label_tuple != ('O', 'O') and token.text in separators:
+                    continue
+                else:
+                    cleaner_format.append((token, label_tuple))
+            ner_instances.__setitem__(s_id, cleaner_format)
+        else:
+            ner_instances.__setitem__(s_id, ner_format)
     return ner_instances
 
 
-def write_ner_dataset(sents, file_name):
+def write_ner_dataset(sents, file_name, no_number=False, clean_separators=False):
     f = open(file_name+'.txt', 'w')
     csv_file = open('csv_'+file_name+'.csv', 'w')
     other_file = open('other_file.txt', 'w')
     b_i = 0
-    ner_format_dictionary = ner_format(sents)
+    ner_format_dictionary = ner_format(sents, no_number, clean_separators)
     for sentence_key in ner_format_dictionary:
         instance = ner_format_dictionary.get(sentence_key)
         csv_file.write(sentence_key+';;\n')
@@ -256,6 +270,7 @@ def double_sequence(sentences):
                     continue
                 if e2 not in id_dictionary.keys():
                     print(e2)
+                    continue
                 (token, k, n, drug_type) = id_dictionary.get(e2)
                 for i in range(len(nlp_doc)):
                     if i == k:
@@ -270,16 +285,19 @@ def double_sequence(sentences):
                     second_sequence.__setitem__(i, 'O')
             second_sequence = [(nlp_doc[i], second_sequence.get(i)) for i in range(len(nlp_doc))]
             second_sequences.append(second_sequence)
-            if e1 in intersected:
+            if e1 in intersected or e1 not in id_dictionary:
                 continue
             (token, k, span_index, drug_type) = id_dictionary.get(e1)
             for i in range(len(nlp_doc)):
                 if i == k:
                     if span_index > 0:
                         for j in range(span_index):
-                            first_sequence.__setitem__(i + j, drug_type)
+                            if j == 0:
+                                first_sequence.__setitem__(i + j, 'B-'+drug_type)
+                            else:
+                                first_sequence.__setitem__(i + j, 'I-' + drug_type)
                     else:
-                        first_sequence.__setitem__(i, drug_type)
+                        first_sequence.__setitem__(i, 'B-'+drug_type)
         for i in range(len(nlp_doc)):
             if i not in first_sequence.keys():
                 first_sequence.__setitem__(i, 'O')
@@ -303,6 +321,87 @@ def iob2_format():
             label = split[1]
             iob2_file.write(token + '\t' + label + '\n')
     iob2_file.close()
+
+
+def cleaned_iob2():
+    csv_file = open('MANUALLY_CHECKED_CSV_TEST.csv', 'r')
+    separators = ['(', ')', '-']
+    lines = csv_file.readlines()
+    iob2_tuples = []
+    lines[0] = lines[0].replace('\n', '')
+    for i in range(1, len(lines)):
+        lines[i] = lines[i].replace('\n', '')
+        if lines[i].startswith('DDI-'):
+            iob2_tuples.append(('\n', '\n'))
+        else:
+            split = lines[i].split(';')
+            token = split[0]
+            label = split[1]
+            id = split[2]
+            if token in separators and label != 'O':
+                continue
+            else:
+                iob2_tuples.append((token, label))
+    for i in range(1, len(iob2_tuples)):
+        token, label = iob2_tuples[i-1]
+        next_token, next_label = iob2_tuples[i]
+        if next_label.startswith('I') and label == 'O':
+            iob2_tuples[i] = (next_token, next_label.replace('I', 'B'))
+    iob2_file = open('CLEANED_CHECKED_TEST_SET_IOB2.txt', 'w')
+    for token, label in iob2_tuples:
+        if token == '\n':
+            iob2_file.write('\n')
+        else:
+            iob2_file.write(token + '\t' + label + '\n')
+    iob2_file.close()
+
+
+def cleaned_linear():
+    separators = ['(', ')', '-']
+    csv_file = open('MANUALLY_CHECKED_CSV_TEST.csv', 'r')
+    lines = csv_file.readlines()
+    token_line = ''
+    id_line = ''
+    label_line = ''
+    token_file = open('CLEANED_CHECKED_TOKEN.txt', 'w')
+    id_file = open('CLEANED_CHECKED_ID.txt', 'w')
+    label_file = open('CLEANED_CHECKED_LABEL.txt', 'w')
+    for i in range(0, len(lines)-1):
+        lines[i] = lines[i].replace('\n', '')
+        if lines[i].startswith('DDI-'):
+            if i != 0:
+                token_file.write(token_line+'\n')
+                label_file.write(label_line+'\n')
+                id_file.write(id_line+'\n')
+            token_line = lines[i].replace(';', '')
+            token_line += ': ['
+            id_line = token_line
+            label_line = token_line
+        else:
+            split = lines[i].split(';')
+            token = number_substitution(split[0])
+            label = split[1]
+            id = split[2]
+            previous_split = lines[i-1].split(';')
+            # previous_tokens = previous_split[0]
+            previous_label = previous_split[1]
+            # previous_id = previous_split[2]
+            if token in separators and label != 'O':
+                continue
+            if previous_label == 'O' and label.startswith('I'):
+                label = label.replace('I', 'B')
+                id = id.replace('I', 'B')
+            if lines[i+1].startswith('DDI-'):
+                token_line += token + ']'
+                id_line += id + ']'
+                label_line += label + ']'
+            else:
+                token_line += token + ', '
+                id_line += id + ', '
+                label_line += label + ', '
+    token_file.close()
+    id_file.close()
+    label_file.close()
 
 
 def linear_format():
@@ -343,7 +442,10 @@ def linear_format():
     label_file.close()
 
 
-# sentences = get_sentences('Dataset/Test/Overall')
-# ner_instances = ner_format(sentences)
-# write_ner_dataset(sentences, 'test')
-# linear_format()
+# sentences = get_sentences('Dataset/Train/Overall')
+# sequence_pairs = double_sequence(sentences)
+# print(sequence_pairs)
+# ner_instances = ner_format(sentences, True, True)
+# write_ner_dataset(sentences, 'train', True, True)
+# cleaned_iob2()
+# cleaned_linear()

@@ -86,22 +86,23 @@ def results(labels, predictions, test_name, folder):
 
 
 # Pre-processing
-sents = get_sentences('Dataset/Train/Onlytrain')
+# sents = get_sentences('Dataset/Train/Overall')
+sents = get_sentences('Train/Sample')
 instances = get_instances(sents)
 instances = [x for x in instances if x is not None]
 instances = negative_filtering(instances)
 instances = [x for x in instances if x.get_dependency_path() is not None and len(x.get_dependency_path()) > 0]
 t_right, t_approximate, t_wrong, t_missing = instances_from_prediction()
 right_selected, right_negative = joint_negative_filtering(t_right)
-approximate_selected, approximate_negative = joint_negative_filtering(t_approximate)
+# approximate_selected, approximate_negative = joint_negative_filtering(t_approximate)
 wrong_selected, wrong_negative = joint_negative_filtering(t_wrong)
 right_selected = [x for x in right_selected if x.dependency_path is not None and len(x.dependency_path) > 0]
-approximate_selected = [x for x in approximate_selected if x.dependency_path and len(x.dependency_path) > 0]
+# approximate_selected = [x for x in approximate_selected if x.dependency_path and len(x.dependency_path) > 0]
 wrong_selected = [x for x in wrong_selected if x.dependency_path and len(x.dependency_path) > 0]
 
 sents, Y_train = get_labelled_instances(instances)
 right_sents, right_labels = joint_labelled_instances(right_selected)
-approximate_sents, approximate_labels = joint_labelled_instances(approximate_selected)
+# approximate_sents, approximate_labels = joint_labelled_instances(approximate_selected)
 wrong_sents, wrong_labels = joint_labelled_instances(wrong_selected)
 missing_labels = generative_missing_labels(t_missing)
 # sents, labels = get_labelled_instances(instances)
@@ -112,10 +113,10 @@ dim = max(lengths)
 
 X_word, X_pos, X_d1, X_d2 = matrix_composition(sents)
 R_word, R_pos, R_d1, R_d2 = matrix_composition(right_sents)
-A_word, A_pos, A_d1, A_d2 = matrix_composition(approximate_sents)
+# A_word, A_pos, A_d1, A_d2 = matrix_composition(approximate_sents)
 W_word, W_pos, W_d1, W_d2 = matrix_composition(wrong_sents)
 
-folder = '2020_01_29_complete'
+folder = '2020_01_31_noapproximate'
 if not exists(folder):
     mkdir(folder)
 for i in range(10):
@@ -140,17 +141,17 @@ for i in range(10):
             mkdir(combination_folder)
         training_set = [X_word]
         right_set = [R_word]
-        approximate_set = [A_word]
+        # approximate_set = [A_word]
         wrong_set = [W_word]
         if pos_tag:
             training_set += [X_pos]
             right_set += [R_pos]
-            approximate_set += [A_pos]
+            # approximate_set += [A_pos]
             wrong_set += [W_pos]
         if offset:
             training_set += [X_d1, X_d2]
             right_set += [R_d1, R_d2]
-            approximate_set += [A_d1, A_d2]
+            # approximate_set += [A_d1, A_d2]
             wrong_set += [W_d1, W_d2]
         model = neural_network(dim, lstm_units, dropout, r_dropout,
                                pos_tag, offset)
@@ -161,13 +162,13 @@ for i in range(10):
         plot(combination_folder, 'loss_accuracy_' + datetime.datetime.now().strftime("%Y%m%d-%H%M%S"), history)
         total_right_labels, right_predictions = generate_predictions(model, right_set, right_labels,
                                                                generate_negative_labels(right_negative))
-        total_approximate_labels, approximate_predictions = generate_predictions(model, approximate_set, approximate_labels,
+        '''total_approximate_labels, approximate_predictions = generate_predictions(model, approximate_set, approximate_labels,
                                                                            generate_negative_labels(
-                                                                               approximate_negative))
+                                                                               approximate_negative))'''
         total_wrong_labels, wrong_predictions = generate_predictions(model, wrong_set, wrong_labels,
                                                                generate_negative_labels(wrong_negative))
         missing_predictions = generate_negative_labels(t_missing)
-        complete_labels = np.concatenate([total_right_labels, total_approximate_labels, total_wrong_labels, missing_labels])
+        complete_labels = np.concatenate([total_right_labels, total_wrong_labels, missing_labels])
         complete_predictions = np.concatenate(
-            [right_predictions, approximate_predictions, wrong_predictions, missing_predictions])
+            [right_predictions, wrong_predictions, missing_predictions])
         results(complete_labels, complete_predictions, 'complete', combination_folder)
