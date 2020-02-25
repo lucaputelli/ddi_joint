@@ -405,16 +405,18 @@ def cleaned_linear():
 
 
 def linear_format():
-    csv_file = open('MANUALLY_CHECKED_CSV_TEST.csv', 'r')
+    csv_file = open('csv_TRAINING_SET.csv', 'r')
     lines = csv_file.readlines()
     token_line = ''
     id_line = ''
     label_line = ''
-    token_file = open('MANUALLY_CHECKED_TOKEN.txt', 'w')
-    id_file = open('MANUALLY_CHECKED_ID.txt', 'w')
-    label_file = open('MANUALLY_CHECKED_LABEL.txt', 'w')
+    token_file = open('TRAINING_TOKEN.txt', 'w')
+    id_file = open('TRAINING_ID.txt', 'w')
+    label_file = open('TRAINING_LABEL.txt', 'w')
     for i in range(0, len(lines)-1):
         lines[i] = lines[i].replace('\n', '')
+        if lines[i] == '':
+            continue
         if lines[i].startswith('DDI-'):
             if i != 0:
                 token_file.write(token_line+'\n')
@@ -443,6 +445,8 @@ def linear_format():
 
 
 # sentences = get_sentences('Dataset/Train/Overall')
+# write_ner_dataset(sentences, 'TRAINING_SET')
+# linear_format()
 # sequence_pairs = double_sequence(sentences)
 # print(sequence_pairs)
 # ner_instances = ner_format(sentences, True, True)

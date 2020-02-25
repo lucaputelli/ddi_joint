@@ -630,13 +630,18 @@ def ner_labels_from_xml(path):
     return labels_dict
 
 
-def double_format():
-    id_sentences_gold = get_tokenized_sentences('MANUALLY_CHECKED_TOKEN.txt', 'MANUALLY_CHECKED_ID.txt')
+def double_format(test: bool = True):
+    if not test:
+        id_sentences_gold = get_tokenized_sentences('TRAINING_TOKEN.txt', 'TRAINING_ID.txt')
+        labels_dict = ner_labels_from_xml('Dataset/Train/Overall')
+    else:
+        id_sentences_gold = get_tokenized_sentences('MANUALLY_CHECKED_TOKEN.txt', 'MANUALLY_CHECKED_ID.txt')
+        labels_dict = ner_labels_from_xml('Dataset/Test/Overall')
     xml_pairs = get_pairs_from_xml()
     all_pairs = list()
-    labels_dict = ner_labels_from_xml('Dataset/Test/Overall')
     complete_pairs = list()
     for i in range(len(id_sentences_gold)):
+        print(i)
         s = id_sentences_gold[i]
         pairs = s.generate_pairs()
         heads = list(set([(p.head_id, p.head_interval) for p in pairs]))
@@ -646,6 +651,16 @@ def double_format():
         tail_sequences = list()
         first_ids = list()
         second_ids = list()
+        if len(heads) == 0:
+            seq_1 = list()
+            seq_2 = list()
+            for j in range(len(original_tokens)):
+                token_1 = CompleteNERToken(original_tokens[j].word, 'O', 'O')
+                token_2 = CompleteNERToken(original_tokens[j].word, 'N', 'N')
+                seq_1.append(token_1)
+                seq_2.append(token_2)
+            head_sequences.append(seq_1)
+            tail_sequences.append(seq_2)
         for head_id, interval in heads:
             first_ids.append(head_id)
             first_sequence = list()
