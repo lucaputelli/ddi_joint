@@ -1,7 +1,5 @@
 from typing import List
-from spacy.language import Doc, Language, Tokenizer
-from spacy.util import compile_infix_regex, compile_prefix_regex, compile_suffix_regex
-import spacy
+from spacy.language import Doc
 from spacy.attrs import LEMMA, LOWER, POS, TAG, ENT_TYPE, IS_ALPHA, DEP, HEAD, SPACY
 import networkx as nx
 from pre_processing_lib import get_sentences, graph_creation
@@ -10,6 +8,8 @@ from spacy import displacy
 from pathlib import Path
 import en_core_web_sm
 import numpy as np
+from data_model import *
+from constants import *
 
 
 def clean_list_string(str_list: str):
@@ -18,200 +18,6 @@ def clean_list_string(str_list: str):
     str_list = str_list.replace('\'', '')
     str_list = str_list.replace('\n', '')
     return str_list
-
-
-class NERToken:
-    def __init__(self, word: str, label: str):
-        self.word = word
-        self.label = label
-
-    def __str__(self):
-        return self.word + ' ' + self.label
-
-
-class CompleteNERToken:
-    def __init__(self, word: str, label: str, id: str):
-        self.word = word
-        self.label = label
-        self.id = id
-
-    def __str__(self):
-        return self.word + ' ' + self.label
-
-
-class SequencePair:
-
-    def __init__(self, first_sequence, second_sequence):
-        self.first_sequence = first_sequence
-        self.second_sequence = second_sequence
-
-
-class Interval:
-    def __init__(self, a: int, b: int):
-        self.low = a
-        self.high = b
-
-    def __str__(self):
-        return str(self.low) + '-' +str(self.high)
-
-
-class PairWithInterval:
-    def __init__(self, head_id: str, head_interval: Interval, tail_id: str, tail_interval: Interval):
-        self.head_id = head_id
-        self.head_interval = head_interval
-        self.tail_id = tail_id
-        self.tail_interval = tail_interval
-
-    def __str__(self):
-        return self.head_id + '('+str(self.head_interval)+'), ' + self.tail_id + '('+str(self.tail_interval)+')'
-
-
-class Sentence:
-    def __init__(self, id: str, token_with_labels: List[NERToken] = None, token_with_predictions: List[NERToken] = None):
-        self.id = id
-        self.original_tokens = token_with_labels
-        self.predicted_tokens = token_with_predictions
-        self.label_dict = Sentence.dict_building(token_with_labels, with_id=True)
-        self.prediction_list = Sentence.dict_building(token_with_predictions, with_id=False)
-        self.correct_drugs: dict = None
-        self.approximate_drugs: dict = None
-        self.merged_drug_starts = None
-        self.wrong_drugs: dict = None
-        self.missing_drugs: dict = None
-        self.doc = None
-        self.complete_list = None
-        self.count_approximate = True
-
-    def __str__(self):
-        if self.doc is None:
-            return str(self.original_tokens)
-        return str(self.doc)
-
-    def set_predictions(self, token_with_predictions: List[NERToken]):
-        self.predicted_tokens = token_with_predictions
-        self.prediction_list = Sentence.dict_building(token_with_predictions, with_id=False)
-        self.check_correct()
-
-    def dict_building(ner_tokens: List[NERToken], with_id: bool):
-        if ner_tokens is None:
-            return None
-        labels = [t.label for t in ner_tokens]
-        drug_starts = [i for i in range(len(labels)) if labels[i].startswith('B')]
-        drug_dict = dict()
-        drug_list = list()
-        for index in range(len(drug_starts)):
-            i = drug_starts[index]
-            id = labels[i].replace('B-', '')
-            j = i+1
-            while j < len(labels):
-                if labels[j] == 'O' or labels[j].startswith('B'):
-                    break
-                else:
-                    j += 1
-            drug_tokens = (i, j)
-            if with_id:
-                drug_dict.__setitem__(id, drug_tokens)
-            else:
-                drug_list.append(drug_tokens)
-        if with_id:
-            return drug_dict
-        else:
-            return drug_list
-
-    def check_correct(self):
-        self.correct_drugs = dict()
-        self.approximate_drugs = dict()
-        self.wrong_drugs = dict()
-        self.missing_drugs = dict()
-        wrong_index = 0
-        for k in self.label_dict.keys():
-            correct_start, correct_end = self.label_dict.get(k)
-            for start, end in self.prediction_list:
-                if abs(end - correct_end) <= 5:
-                    original_string = ''
-                    predicted_string = ''
-                    for i in range(correct_start, correct_end):
-                        original_string += self.original_tokens[i].word
-                    for i in range(start, end):
-                        predicted_string += self.predicted_tokens[i].word
-                    if original_string == predicted_string:
-                        if (start, end) not in self.correct_drugs.values():
-                            self.correct_drugs.__setitem__(k, (start, end))
-                            break
-                    elif predicted_string in original_string:
-                        if len(predicted_string) >= 0.5*len(original_string) and self.count_approximate:
-                            self.approximate_drugs.__setitem__(k, (start, end))
-        for (start, end) in self.prediction_list:
-            if (start, end) not in self.correct_drugs.values() and (start, end) not in self.approximate_drugs.values():
-                wrong_id = self.id + '.w' + str(wrong_index)
-                self.wrong_drugs.__setitem__(wrong_id, (start, end))
-                wrong_index += 1
-        for k in self.label_dict:
-            if k not in self.correct_drugs.keys() and k not in self.approximate_drugs.keys():
-                self.missing_drugs.__setitem__(k, self.label_dict.get(k))
-        complete_list = list()
-        for k in self.correct_drugs.keys():
-            start, end = self.correct_drugs.get(k)
-            complete_list.append((start, end, k, 'C'))
-        for k in self.approximate_drugs.keys():
-            start, end = self.approximate_drugs.get(k)
-            complete_list.append((start, end, k, 'A'))
-        for k in self.wrong_drugs.keys():
-            start, end = self.wrong_drugs.get(k)
-            complete_list.append((start, end, k, 'W'))
-        complete_list = sorted(complete_list)
-        print(complete_list)
-        self.complete_list = complete_list
-
-    def generate_pairs(self):
-        pairs = list()
-        for i in range(len(self.label_dict.keys())-1):
-            head_key = list(self.label_dict.keys())[i]
-            head_a, head_b = self.label_dict.get(head_key)
-            head_interval = Interval(head_a, head_b)
-            for j in range(i+1, len(self.label_dict.keys())):
-                tail_key = list(self.label_dict.keys())[j]
-                tail_a, tail_b = self.label_dict.get(tail_key)
-                tail_interval = Interval(tail_a, tail_b)
-                pair = PairWithInterval(head_key, head_interval, tail_key, tail_interval)
-                pairs.append(pair)
-        return pairs
-
-
-class Pair:
-    def __init__(self, e1_id: str, e2_id: str, e1_index: int, e2_index: int, e1_text: str, e2_text: str, sentence: Sentence):
-        self.e1_id = e1_id
-        self.e2_id = e2_id
-        self.e1_index = e1_index
-        self.e2_index = e2_index
-        self.e1_text = e1_text
-        self.e2_text = e2_text
-        self.type = None
-        self.sentence = sentence
-
-    def set_type(self, type: str):
-        self.type = type
-
-
-class JointInstance:
-    def __init__(self, doc: Doc, original_doc: Doc, pair: Pair):
-        self.doc = doc
-        self.original_doc = original_doc
-        self.e1_id = pair.e1_id
-        self.e2_id = pair.e2_id
-        self.pair = pair
-        self.class_value = ''
-        self.type = self.pair.type
-        self.dependency_path = None
-
-    def __str__(self):
-        return self.doc.text
-
-    def set_dependency_path(self, dependency_path):
-        self.dependency_path = dependency_path
-
-    def __len__(self):
-        return len(self.doc)
 
 
 def get_tokenized_sentences(sentences_path, labels_path):
@@ -257,20 +63,6 @@ def substitution(doc: Doc, pair: Pair, drugs) -> Doc:
     doc2 = Doc(doc.vocab, words=word_list)
     doc2.from_array([LEMMA, LOWER, POS, TAG, ENT_TYPE, IS_ALPHA, DEP, HEAD, SPACY], np_array)
     return doc2
-
-
-def custom_tokenizer(nlp):
-    prefix_re = compile_prefix_regex(Language.Defaults.prefixes + (';', '\*'))
-    suffix_re = compile_suffix_regex(Language.Defaults.suffixes + (';', '\*'))
-    infix_re = compile_infix_regex(Language.Defaults.infixes + ('(', ')', "/", "-", ";", "\*"))
-    return Tokenizer(nlp.vocab, prefix_search=prefix_re.search,
-                                suffix_search=suffix_re.search,
-                                infix_finditer=infix_re.finditer,
-                                token_match=None)
-
-
-nlp = spacy.load('en')
-nlp.tokenizer = custom_tokenizer(nlp)
 
 
 def generate_gold_standard(sentences: List[Sentence]) -> (List[JointInstance], List[Sentence]):
@@ -331,7 +123,7 @@ def generate_gold_standard(sentences: List[Sentence]) -> (List[JointInstance], L
                     except IndexError:
                         i_text = 'NoWord'
                     j_text = doc[drug_j]
-                    p = Pair(drug_keys[i], drug_keys[j], drug_i, drug_j, i_text, j_text)
+                    p = Pair(drug_keys[i], drug_keys[j], drug_i, drug_j, i_text, j_text, s)
                     pairs.append(p)
         for p in pairs:
             new_doc = substitution(doc, p, drugs)
@@ -347,7 +139,7 @@ def generate_gold_standard(sentences: List[Sentence]) -> (List[JointInstance], L
         for (e1, e2, class_value) in xml_pairs:
             if e1 == e1_id and e2 == e2_id:
                 found = True
-                instances[i].set_class(class_value)
+                instances[i].class_value = class_value
                 break
     return instances, sentences
 
@@ -701,12 +493,17 @@ def double_format(test: bool = True):
                         for id1, id2, r_label in xml_pairs:
                             if id1 == head_id and id2 == second_id:
                                 class_value = r_label
-                        if original_tokens[k].label.startswith('B'):
-                            r_label = 'B-' + class_value
-                            r_id = 'B-'+second_id
+                        # Segno solo le istanze non unrelated
+                        if class_value != 'unrelated':
+                            if original_tokens[k].label.startswith('B'):
+                                r_label = 'B-' + class_value
+                                r_id = 'B-'+second_id
+                            else:
+                                r_label = 'I-' + class_value
+                                r_id = 'I-'+second_id
                         else:
-                            r_label = 'I-' + class_value
-                            r_id = 'I-'+second_id
+                            r_label = 'N'
+                            r_id = 'O'
                     else:
                         r_label = 'N'
                         r_id = 'O'
@@ -736,5 +533,5 @@ def double_format(test: bool = True):
     return complete_pairs
 
 
-pairs = double_format()
-print(len(pairs))
+# pairs = double_format()
+# print(len(pairs))

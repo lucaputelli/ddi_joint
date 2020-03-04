@@ -507,3 +507,21 @@ def to_class_int(label: str) -> int:
         return 3
     if label == 'int':
         return 4
+
+
+def get_character_dictionary():
+    sents = get_sentences('Dataset/Train/Onlytrain')
+    characters = dict()
+    index = 1
+    for s in sents:
+        text = s.attributes['text'].value
+        for c in text:
+            if c not in characters.keys():
+                characters.__setitem__(c, index)
+                index += 1
+    # print(characters)
+    import pickle
+    dict_file = open('character_dict.pkl', 'wb')
+    pickle.dump(characters, dict_file)
+    return characters
+
