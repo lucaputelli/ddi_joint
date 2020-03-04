@@ -144,8 +144,8 @@ def generate_gold_standard(sentences: List[Sentence]) -> (List[JointInstance], L
     return instances, sentences
 
 
-def get_pairs_from_xml():
-    xml_sentences = get_sentences('Dataset/Test/Overall')
+def get_pairs_from_xml(path: str):
+    xml_sentences = get_sentences(path)
     pairs = list()
     for i in range(0, len(xml_sentences)):
         # s_id = xml_sentences[i].attributes['id'].value
@@ -157,8 +157,12 @@ def get_pairs_from_xml():
             if ddi == 'false':
                 class_value = 'unrelated'
             else:
-                class_value = s_pair.attributes['type'].value
+                try:
+                    class_value = s_pair.attributes['type'].value
+                except KeyError:
+                    class_value = 'int'
             pairs.append((e1, e2, class_value))
+    pairs.sort()
     return pairs
 
 
@@ -290,7 +294,7 @@ def instances_from_prediction():
             new_doc = substitution(doc, p, drugs)
             instance = JointInstance(new_doc, doc, p)
             instances.append(instance)
-    xml_pairs = get_pairs_from_xml()
+    xml_pairs = get_pairs_from_xml('Dataset/Test/Overall')
     missing_pairs = list()
     for e1, e2, class_value in xml_pairs:
         found = False
@@ -426,10 +430,11 @@ def double_format(test: bool = True):
     if not test:
         id_sentences_gold = get_tokenized_sentences('TRAINING_TOKEN.txt', 'TRAINING_ID.txt')
         labels_dict = ner_labels_from_xml('Dataset/Train/Overall')
+        xml_pairs = get_pairs_from_xml('Dataset/Train/Overall')
     else:
         id_sentences_gold = get_tokenized_sentences('MANUALLY_CHECKED_TOKEN.txt', 'MANUALLY_CHECKED_ID.txt')
         labels_dict = ner_labels_from_xml('Dataset/Test/Overall')
-    xml_pairs = get_pairs_from_xml()
+        xml_pairs = get_pairs_from_xml('Dataset/Test/Overall')
     all_pairs = list()
     complete_pairs = list()
     for i in range(len(id_sentences_gold)):

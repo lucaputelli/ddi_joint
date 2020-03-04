@@ -1,6 +1,7 @@
 from spacy.util import compile_infix_regex, compile_prefix_regex, compile_suffix_regex
 import spacy
 from spacy.language import Language, Tokenizer
+from gensim.models import Word2Vec
 
 
 def custom_tokenizer(nlp):
@@ -15,3 +16,5 @@ def custom_tokenizer(nlp):
 
 nlp = spacy.load('en')
 nlp.tokenizer = custom_tokenizer(nlp)
+word_model = Word2Vec.load('pub_med_retrained_ddi_word_embedding_200.model')
+tag_model = Word2Vec.load('ddi_pos_embedding.model')

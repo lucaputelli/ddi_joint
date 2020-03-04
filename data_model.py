@@ -33,6 +33,33 @@ class SequencePair:
     def __init__(self, first_sequence, second_sequence):
         self.first_sequence = first_sequence
         self.second_sequence = second_sequence
+        assert len(self.first_sequence) == len(self.second_sequence)
+        self.word_list = [token.word for token in self.first_sequence]
+        self.first_labels = [token.label for token in self.first_sequence]
+        self.second_labels = [token.label for token in self.second_sequence]
+        self.doc = self.create_doc()
+
+    def __len__(self):
+        return len(self.first_sequence)
+
+    def create_doc(self):
+        tokens = self.word_list
+        infixes = ['(', ')', '/', '-', ';', '*']
+        spaces = list()
+        for i in range(len(tokens) - 1):
+            actual = tokens[i]
+            next = tokens[i + 1]
+            if actual in infixes or next in infixes:
+                space = False
+            else:
+                space = True
+            spaces.append(space)
+        spaces.append(False)
+        try:
+            doc = Doc(nlp.vocab, tokens, spaces)
+        except ValueError:
+            doc = Doc(nlp.vocab, tokens)
+        return doc
 
 
 class Interval:
