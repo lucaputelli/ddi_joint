@@ -3,6 +3,9 @@ from model import character_network
 from relation_format_extraction import double_format, get_tokenized_sentences
 from constants import word_model, tag_model
 from data_model import SequencePair
+import os
+from post_processing import joint_plot
+from random import randint
 
 
 def generative_missing_labels(missing: List):
@@ -119,18 +122,47 @@ def get_dataset(pairs: List[SequencePair], max_length, max_char_length, labels_d
 
 
 # Pre-processing
-# train_pairs = double_format(test=False)
+char_dict = get_character_dictionary()
+train_pairs = double_format(test=False)
 values_first = 3
 test_pairs = double_format(test=True)
 labels_dict = generate_second_labels_dict(test_pairs)
 values_second = len(labels_dict.keys())
-lengths = [len(p) for p in test_pairs]
+lengths = [len(p) for p in train_pairs+test_pairs]
 max_length = max(lengths)
-char_lenghts = [len(t) for p in test_pairs for t in p.word_list]
+char_lenghts = [len(t) for p in train_pairs+test_pairs for t in p.word_list]
 char_max = max(char_lenghts)
-word, pos, char, o1, o2 = get_dataset(test_pairs, max_length, char_max, labels_dict)
-print(o1.shape, o2.shape)
-model = character_network(60, values_first, values_second, max_length, char_max, True, True)
-out1, out2 = model.predict([word, pos, char])
-print(out1.shape, out2.shape)
-history = model.fit(x=[word, pos, char], y={'first_crf': o1, 'second_crf': o2}, batch_size=128, epochs=10)
+word, pos, char, o1, o2 = get_dataset(train_pairs, max_length, char_max, labels_dict)
+t_word, t_pos, t_char, t_o1, t_o2 = get_dataset(test_pairs, max_length, char_max, labels_dict)
+lstm_layers = [1, 2, 3]
+lstm_dimensions = [48, 72, 96, 120, 144, 168, 200, 224, 248, 272, 296]
+char_lstm_dimensions = [5, 10, 15, 20, 25]
+character_bool = [True, False]
+attention_bool = [True, False]
+custom_layer_bool = [True, False]
+date_path = '2020_03_06'
+if not os.path.exists(date_path):
+    os.mkdir(date_path)
+for i in range(20):
+    layers = lstm_layers[randint(0, len(lstm_layers)-1)]
+    lstm_dim = lstm_dimensions[randint(0, len(lstm_dimensions)-1)]
+    char_lstm = char_lstm_dimensions[randint(0, len(char_lstm_dimensions)-1)]
+    character = character_bool[randint(0, 1)]
+    attention = attention_bool[randint(0, 1)]
+    custom = custom_layer_bool[randint(0, 1)]
+    path = date_path + '/L{}_D{}'.format(layers, lstm_dim)
+    model = character_network(layers, lstm_dim, char_lstm, values_first, values_second, 25, max_length, char_max,
+                              True, character, attention, custom)
+    input = [word, pos]
+    if character:
+        input += [char]
+        path += '_C{}_char'.format(char_lstm)
+    if attention:
+        path += '_att'
+    if custom:
+        path += '_custom'
+    if not os.path.exists(path):
+        os.mkdir(path)
+    history = model.fit(x=input, y={'first_crf': o1, 'second_crf': o2}, validation_split=0.2,
+                        batch_size=128, epochs=1, verbose=2)
+    joint_plot(path, 'plot', history)

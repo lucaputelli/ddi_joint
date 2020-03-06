@@ -1,9 +1,10 @@
 import numpy as np
 from matplotlib import pyplot
 from sklearn.metrics import confusion_matrix, classification_report
+from keras.callbacks import History
 
 
-def plot(folder: str, name: str, history):
+def plot(folder: str, name: str, history: History):
     pyplot.clf()
     pyplot.figure(1, figsize=(13, 6))
     pyplot.subplot(1, 2, 1)
@@ -27,6 +28,24 @@ def plot(folder: str, name: str, history):
     pyplot.xlabel('epoch')
     pyplot.legend(['train', 'validation'], loc='upper right')
     pyplot.tight_layout()
+    pyplot.savefig(folder + '/' + name + '.png')
+
+
+def joint_plot(folder: str, name: str, history: History):
+    pyplot.clf()
+    fig, axs = pyplot.subplots(2, 2)
+    axs[0, 0].plot(history.history['first_crf_loss'])
+    axs[0, 0].plot(history.history['val_first_crf_loss'])
+    # axs[0, 0].set_title('first loss')
+    axs[0, 1].plot(history.history['first_crf_acc'])
+    axs[0, 1].plot(history.history['val_first_crf_acc'])
+    # axs[0, 1].set_title('first acc')
+    axs[1, 0].plot(history.history['second_crf_loss'])
+    axs[1, 0].plot(history.history['val_second_crf_loss'])
+    # axs[1, 0].set_title('second loss')
+    axs[1, 1].plot(history.history['second_crf_acc'])
+    axs[1, 1].plot(history.history['val_second_crf_acc'])
+    # axs[1, 1].set_title('second acc')
     pyplot.savefig(folder + '/' + name + '.png')
 
 

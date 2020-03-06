@@ -510,7 +510,7 @@ def to_class_int(label: str) -> int:
 
 
 def get_character_dictionary():
-    sents = get_sentences('Dataset/Train/Onlytrain')
+    sents = get_sentences('Dataset/Train/Overall')+get_sentences('Dataset/Test/Overall')
     characters = dict()
     index = 1
     for s in sents:
